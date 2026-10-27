@@ -1,0 +1,4 @@
+#!/bin/sh
+# Wired-only marker. Does not set LAN address or credentials.
+set -e
+exit 0

@@ -1,0 +1,13 @@
+{
+  "core": {
+    "package": "mihomo-meta",
+    "provides": "mihomo",
+    "install": "/usr/libexec/mihomo",
+    "openclash": "/etc/openclash/core/clash_meta"
+  },
+  "geodata": {
+    "GeoIP.dat": "link to /usr/share/v2ray/geoip.dat from v2ray-geoip",
+    "GeoSite.dat": "owned only by luci-app-openclash; this package does not install it"
+  },
+  "note": "No downloader. Service stays disabled until configured."
+}

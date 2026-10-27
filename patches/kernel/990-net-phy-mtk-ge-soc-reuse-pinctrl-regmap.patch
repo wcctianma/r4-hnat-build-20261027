@@ -1,0 +1,69 @@
+From: r4-hnat-build <noreply@users.noreply.github.com>
+Subject: [PATCH] net: phy: mtk-ge-soc: reuse pinctrl regmap for MT7988 LED pio
+
+syscon_regmap_lookup_by_phandle() re-claims resources already owned by
+the MT7988 pinctrl driver, so mt7988_phy_probe_shared() fails and phylib
+binds Generic PHY. RJ45 LEDs then have no brightness backend.
+
+Reuse the existing regmap and keep a boottrap failure non-fatal. Path is
+drivers/net/phy/mediatek/mtk-ge-soc.c, matching Linux 6.12.112. The older
+drivers/net/phy/mediatek-ge-soc.c patch does not apply to this tree.
+
+---
+--- a/drivers/net/phy/mediatek/mtk-ge-soc.c
++++ b/drivers/net/phy/mediatek/mtk-ge-soc.c
+@@ -4,6 +4,7 @@
+ #include <linux/mfd/syscon.h>
+ #include <linux/module.h>
+ #include <linux/nvmem-consumer.h>
++#include <linux/of.h>
+ #include <linux/pinctrl/consumer.h>
+ #include <linux/phy.h>
+ #include <linux/regmap.h>
+@@ -1414,6 +1415,7 @@
+ {
+ 	struct device_node *np = dev_of_node(&phydev->mdio.bus->dev);
+ 	struct mtk_socphy_shared *shared = phydev->shared->priv;
++	struct device_node *pio_np;
+ 	struct regmap *regmap;
+ 	u32 reg;
+ 	int ret;
+@@ -1431,13 +1433,33 @@
+ 	 * The 4 bits in TPBANK0 are kept as package shared data and are used to
+ 	 * set LED polarity for each of the LED0.
+ 	 */
+-	regmap = syscon_regmap_lookup_by_phandle(np, "mediatek,pio");
+-	if (IS_ERR(regmap))
+-		return PTR_ERR(regmap);
++	/* pio is already owned by mediatek,mt7988-pinctrl. syscon lookup with
++	 * check_res re-claims its clock/reset and aborts this probe, so phylib
++	 * falls back to genphy and the RJ45 LEDs stay dark. Reuse the existing
++	 * regmap. A boottrap read failure only affects LED polarity, so warn and
++	 * continue instead of dropping the real PHY driver.
++	 */
++	pio_np = of_parse_phandle(np, "mediatek,pio", 0);
++	if (!pio_np) {
++		dev_warn(&phydev->mdio.dev, "mt7988 LED: missing mediatek,pio phandle\n");
++		shared->boottrap = 0;
++		return 0;
++	}
++	regmap = device_node_to_regmap(pio_np);
++	of_node_put(pio_np);
++	if (IS_ERR(regmap)) {
++		dev_warn(&phydev->mdio.dev, "mt7988 LED: device_node_to_regmap(pio) failed: %ld\n", PTR_ERR(regmap));
++		shared->boottrap = 0;
++		return 0;
++	}
+ 
+ 	ret = regmap_read(regmap, RG_GPIO_MISC_TPBANK0, &reg);
+-	if (ret)
+-		return ret;
++	if (ret) {
++		dev_warn(&phydev->mdio.dev, "mt7988 LED: TPBANK0 read failed: %d\n", ret);
++		shared->boottrap = 0;
++		return 0;
++	}
++	dev_info(&phydev->mdio.dev, "mt7988 LED: boottrap = 0x%x\n", FIELD_GET(RG_GPIO_MISC_TPBANK0_BOOTMODE, reg));
+ 
+ 	shared->boottrap = FIELD_GET(RG_GPIO_MISC_TPBANK0_BOOTMODE, reg);
+ 
